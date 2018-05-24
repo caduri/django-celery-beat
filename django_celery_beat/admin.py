@@ -1,15 +1,14 @@
 """Periodic Task Admin interface."""
 from __future__ import absolute_import, unicode_literals
 
+from celery import current_app
+from celery.utils import cached_property
 from django import forms
 from django.conf import settings
 from django.contrib import admin
 from django.forms.widgets import Select
 from django.template.defaultfilters import pluralize
 from django.utils.translation import ugettext_lazy as _
-
-from celery import current_app
-from celery.utils import cached_property
 from kombu.utils.json import loads
 
 from .models import (
@@ -111,21 +110,19 @@ class PeriodicTaskForm(forms.ModelForm):
 
 
 class PeriodicTaskAdmin(admin.ModelAdmin):
-    """Admin-interface for periodic tasks."""
-
+    """Admin-interface for peridic tasks."""
+    search_fields = ['name']
     form = PeriodicTaskForm
     model = PeriodicTask
-    celery_app = current_app
-    list_display = ('__str__', 'enabled', 'interval', 'start_time', 'one_off')
-    actions = ('enable_tasks', 'disable_tasks', 'run_tasks')
+    list_display = ('name', 'enabled', 'total_run_count', '__str__')
+    actions = ('enable_tasks', 'disable_tasks')
     fieldsets = (
         (None, {
-            'fields': ('name', 'regtask', 'task', 'enabled', 'description',),
+            'fields': ('name', 'regtask', 'task', 'enabled'),
             'classes': ('extrapretty', 'wide'),
         }),
         ('Schedule', {
-            'fields': ('interval', 'crontab', 'solar',
-                       'start_time', 'one_off'),
+            'fields': ('interval', 'crontab', 'solar'),
             'classes': ('extrapretty', 'wide', ),
         }),
         ('Arguments', {
@@ -174,25 +171,6 @@ class PeriodicTaskAdmin(admin.ModelAdmin):
             ),
         )
     disable_tasks.short_description = _('Disable selected tasks')
-
-    def run_tasks(self, request, queryset):
-        self.celery_app.loader.import_default_modules()
-        tasks = [(self.celery_app.tasks.get(task.task),
-                  loads(task.args),
-                  loads(task.kwargs))
-                 for task in queryset]
-        task_ids = [task.delay(*args, **kwargs)
-                    for task, args, kwargs in tasks]
-        tasks_run = len(task_ids)
-        self.message_user(
-            request,
-            _('{0} task{1} {2} successfully run').format(
-                tasks_run,
-                pluralize(tasks_run),
-                pluralize(tasks_run, _('was,were')),
-            ),
-        )
-    run_tasks.short_description = _('Run selected tasks')
 
 
 admin.site.register(IntervalSchedule)

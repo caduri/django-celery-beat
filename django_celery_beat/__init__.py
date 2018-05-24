@@ -7,10 +7,9 @@
 from __future__ import absolute_import, unicode_literals
 
 import re
-
 from collections import namedtuple
 
-__version__ = '1.1.1'
+__version__ = '1.0.1'
 __author__ = 'Ask Solem'
 __contact__ = 'ask@celeryproject.org'
 __homepage__ = 'https://github.com/celery/django-celery-beat'

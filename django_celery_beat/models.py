@@ -3,19 +3,15 @@ from __future__ import absolute_import, unicode_literals
 
 from datetime import timedelta
 
+from celery import schedules
+from celery.five import python_2_unicode_compatible
 from django.core.exceptions import MultipleObjectsReturned, ValidationError
 from django.db import models
 from django.db.models import signals
 from django.utils.translation import ugettext_lazy as _
 
-from celery import schedules
-from celery.five import python_2_unicode_compatible
-
 from . import managers
-from .tzcrontab import TzAwareCrontab
-from .utils import now, make_aware
-
-import timezone_field
+from .utils import now
 
 DAYS = 'days'
 HOURS = 'hours'
@@ -31,7 +27,7 @@ PERIOD_CHOICES = (
     (MICROSECONDS, _('Microseconds')),
 )
 
-SOLAR_SCHEDULES = [(x, _(x)) for x in sorted(schedules.solar._all_events)]
+SOLAR_SCHEDULES = [(x, _(x)) for x in schedules.solar._all_events]
 
 
 def cronexp(field):
@@ -63,10 +59,7 @@ class SolarSchedule(models.Model):
 
     @property
     def schedule(self):
-        return schedules.solar(self.event,
-                               self.latitude,
-                               self.longitude,
-                               nowfun=lambda: make_aware(now()))
+        return schedules.solar(self.event, self.latitude, self.longitude)
 
     @classmethod
     def from_schedule(cls, schedule):
@@ -115,10 +108,7 @@ class IntervalSchedule(models.Model):
 
     @property
     def schedule(self):
-        return schedules.schedule(
-            timedelta(**{self.period: self.every}),
-            nowfun=lambda: make_aware(now())
-        )
+        return schedules.schedule(timedelta(**{self.period: self.every}))
 
     @classmethod
     def from_schedule(cls, schedule, period=SECONDS):
@@ -143,28 +133,19 @@ class IntervalSchedule(models.Model):
 
 @python_2_unicode_compatible
 class CrontabSchedule(models.Model):
-    """Timezone Aware Crontab-like schedule."""
+    """Crontab-like schedule."""
 
-    #
-    # The worst case scenario for day of month is a list of all 31 day numbers
-    # '[1, 2, ..., 31]' which has a length of 115. Likewise, minute can be
-    # 0..59 and hour can be 0..23. Ensure we can accomodate these by allowing
-    # 4 chars for each value (what we save on 0-9 accomodates the []).
-    # We leave the other fields at their historical length.
-    #
-    minute = models.CharField(_('minute'), max_length=60 * 4, default='*')
-    hour = models.CharField(_('hour'), max_length=24 * 4, default='*')
+    minute = models.CharField(_('minute'), max_length=64, default='*')
+    hour = models.CharField(_('hour'), max_length=64, default='*')
     day_of_week = models.CharField(
         _('day of week'), max_length=64, default='*',
     )
     day_of_month = models.CharField(
-        _('day of month'), max_length=31 * 4, default='*',
+        _('day of month'), max_length=64, default='*',
     )
     month_of_year = models.CharField(
         _('month of year'), max_length=64, default='*',
     )
-
-    timezone = timezone_field.TimeZoneField(default='UTC')
 
     class Meta:
         """Table information."""
@@ -172,24 +153,24 @@ class CrontabSchedule(models.Model):
         verbose_name = _('crontab')
         verbose_name_plural = _('crontabs')
         ordering = ['month_of_year', 'day_of_month',
-                    'day_of_week', 'hour', 'minute', 'timezone']
+                    'day_of_week', 'hour', 'minute']
 
     def __str__(self):
-        return '{0} {1} {2} {3} {4} (m/h/d/dM/MY) {5}'.format(
-            cronexp(self.minute), cronexp(self.hour),
-            cronexp(self.day_of_week), cronexp(self.day_of_month),
-            cronexp(self.month_of_year), str(self.timezone)
+        return '{0} {1} {2} {3} {4} (m/h/d/dM/MY)'.format(
+            cronexp(self.minute),
+            cronexp(self.hour),
+            cronexp(self.day_of_week),
+            cronexp(self.day_of_month),
+            cronexp(self.month_of_year),
         )
 
     @property
     def schedule(self):
-        return TzAwareCrontab(
-            minute=self.minute,
-            hour=self.hour, day_of_week=self.day_of_week,
-            day_of_month=self.day_of_month,
-            month_of_year=self.month_of_year,
-            tz=self.timezone
-        )
+        return schedules.crontab(minute=self.minute,
+                                 hour=self.hour,
+                                 day_of_week=self.day_of_week,
+                                 day_of_month=self.day_of_month,
+                                 month_of_year=self.month_of_year)
 
     @classmethod
     def from_schedule(cls, schedule):
@@ -197,9 +178,7 @@ class CrontabSchedule(models.Model):
                 'hour': schedule._orig_hour,
                 'day_of_week': schedule._orig_day_of_week,
                 'day_of_month': schedule._orig_day_of_month,
-                'month_of_year': schedule._orig_month_of_year,
-                'timezone': schedule.tz
-                }
+                'month_of_year': schedule._orig_month_of_year}
         try:
             return cls.objects.get(**spec)
         except cls.DoesNotExist:
@@ -276,12 +255,6 @@ class PeriodicTask(models.Model):
     expires = models.DateTimeField(
         _('expires'), blank=True, null=True,
     )
-    one_off = models.BooleanField(
-        _('one-off task'), default=False,
-    )
-    start_time = models.DateTimeField(
-        _('start_time'), blank=True, null=True,
-    )
     enabled = models.BooleanField(
         _('enabled'), default=True,
     )
@@ -343,8 +316,6 @@ class PeriodicTask(models.Model):
             return self.interval.schedule
         if self.crontab:
             return self.crontab.schedule
-        if self.solar:
-            return self.solar.schedule
 
 
 signals.pre_delete.connect(PeriodicTasks.changed, sender=PeriodicTask)
